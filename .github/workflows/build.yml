@@ -60,7 +60,7 @@ jobs:
             zephyr/
             bootloader/
             zmk/
-          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('config/west.yml', 'Dockerfile') }}
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('config/west.yml', 'Dockerfile', 'scripts/update_west.py') }}
       - name: West Init
         run: west init -l config
       - name: West Update

@@ -24,7 +24,7 @@ if [ "${BUILD_RIGHT}" = true ]; then
     cp build/right/zephyr/zmk.uf2 "./firmware/${TIMESTAMP}-${COMMIT}-right-clique.uf2"
 fi
 
-cp config/west.yml firmware/west-manifest.yml
+cat config/west.yml > firmware/west-manifest.yml
 west manifest --freeze --active-only > firmware/west-active-manifest.yml
 printf 'source_revision=%s\nsource_dirty=%s\nsource_label=%s\nsource_date_epoch=%s\nimage=%s\nzephyr_build_version=%s\n' \
     "${BUILD_SOURCE_REVISION}" "${BUILD_SOURCE_DIRTY}" "${BUILD_SOURCE_LABEL}" "${SOURCE_DATE_EPOCH}" "${BUILD_IMAGE_REF}" "${ZEPHYR_BUILD_VERSION}" \
