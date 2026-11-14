@@ -1,0 +1,8 @@
+**
+!Dockerfile
+!config/
+!config/west.yml
+!bin/
+!bin/build.sh
+!scripts/
+!scripts/update_west.py

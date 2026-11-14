@@ -63,6 +63,61 @@ sudo apt-get install docker make
 1. Execute `make` to build firmware for both halves or `make left` to only build firmware for the left hand side.
 2. Check the `firmware` directory for the latest firmware build. The first part of the filename is the timestamp when the firmware was built.
 
+The local build copies your configuration into a temporary workspace. Version
+generation and failed builds never replace `config/version.dtsi` or discard your
+uncommitted edits. A firmware bundle is copied into `firmware` only after every
+selected target succeeds. The build does not require an interactive terminal.
+
+`Dockerfile` and the GitHub workflow pin the same compiler image by digest.
+`config/west.yml` is the complete resolved dependency manifest, with immutable
+commit IDs for active and inactive projects. Dependency preparation needs network
+access; compilation runs without it. The Zephyr build-version label uses the
+first 12 characters of its locked commit, currently `dacab4875df7`. Fetches exclude
+tags so generated application-version metadata also stays tied to source commits.
+
+Each build includes `build-info.txt`, the full and active West manifests,
+configuration hashes, and firmware `SHA256SUMS`. The default version date remains
+the current UTC date. For a repeat build, use the same source/configuration,
+compiler digest, `SOURCE_DATE_EPOCH` and four-character `BUILD_SOURCE_LABEL`:
+
+```shell
+SOURCE_DATE_EPOCH=1735689600 BUILD_SOURCE_LABEL=V3.0 make
+```
+
+The receipt records whether the source checkout was dirty; a commit ID alone is
+not evidence of which uncommitted configuration was built. Build scripts are
+covered by `python3 -m unittest discover -s tests`. Compiling firmware does not
+establish physical keyboard behavior or authorize flashing or resetting it.
+The older `bin/get_version_local.sh` CLI remains available for downstream users
+and the monorepo's generator compatibility tests; the safe local builder calls
+the shared argument-based generator in its temporary configuration copy.
+
+### Updating build inputs
+
+The repository maintainer owns deliberate updates; this repository has no
+dependency update bot. Edit the intended ZMK commit in `config/west-input.yml`,
+then regenerate the full lock using the currently pinned compiler image:
+
+```shell
+compiler_image=$(sed -n 's/^FROM //p' Dockerfile)
+docker run --rm \
+  --user "$(id -u):$(id -g)" --env HOME=/tmp \
+  --volume "$PWD:/config" \
+  --entrypoint python3 "$compiler_image" /config/scripts/update_west.py
+git diff -- config/west-input.yml config/west.yml
+```
+
+This explicit network operation resolves imports in a temporary workspace,
+preserves inactive projects and group filters, and verifies that flattening did
+not change the active graph. It replaces the lock only after validation; failure
+leaves the previous lock intact. Ordinary builds read `config/west.yml` only.
+Review every changed project and rebuild both halves before accepting an update.
+For a compiler update, change the digest in `Dockerfile` and both workflow jobs
+together, then repeat both builds with identical metadata inputs. GitHub Actions
+updates retain their version comments and immutable commit IDs. Preserve the
+previous source commit and firmware bundle for rollback. Keymaps are separate
+from dependency updates.
+
 ### Cleanup
 
 The built docker container and compiled firmware files can be deleted with `make clean`. This might be necessary if you updated your fork from V2.0 to V3.0 and are encountering build failures.

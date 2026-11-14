@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 
 # Get the date, first 4 chars of branch name and short commit hash
-date=$(date -u +"%Y%m%d")
+date=${4:-$(date -u +"%Y%m%d")}
+[[ $date =~ ^[0-9]{8}$ ]] || { echo 'version date must be YYYYMMDD' >&2; exit 2; }
 branch=${1:-$(git rev-parse --abbrev-ref HEAD | cut -c1-4)}
 commit=${2:-$(git rev-parse --short HEAD)}
 clique=${3:-"."}
