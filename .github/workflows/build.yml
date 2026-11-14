@@ -2,26 +2,55 @@ on: [push, pull_request, workflow_dispatch]
 
 name: Build
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
 jobs:
-  build:
+  local-build-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     container:
-      image: zmkfirmware/zmk-build-arm:stable
+      image: docker.io/zmkfirmware/zmk-build-arm@sha256:edb1c953438c6f720ddb79c3762f3972013b7fbbaf4fff3592fc869983e7afc5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s tests
+  build:
+    needs: local-build-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    container:
+      image: docker.io/zmkfirmware/zmk-build-arm@sha256:edb1c953438c6f720ddb79c3762f3972013b7fbbaf4fff3592fc869983e7afc5
     name: Build (Clique)
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: Get version data
         id: get_info
+        shell: bash
         run: |
-          timestamp=$(date +"%Y%m%d%H%M")
-          commit=$(echo "${{ github.sha }}" | cut -c1-7)
+          epoch=$(date -u +%s)
+          timestamp=$(date -u -d "@$epoch" +"%Y%m%d%H%M")
+          commit=${GITHUB_SHA:0:7}
           file_prefix=$timestamp-$commit
-          branch_name=$(echo "${{ github.ref }}" | awk -F'/' '{print $3}' | cut -c1-4)
-          echo "file_prefix=$file_prefix" >> $GITHUB_OUTPUT
-          bin/get_version.sh $branch_name $commit clique
+          branch_name=$(printf '%s\n' "$GITHUB_REF" | awk -F'/' '{print $3}' | cut -c1-4)
+          echo "file_prefix=$file_prefix" >> "$GITHUB_OUTPUT"
+          echo "SOURCE_DATE_EPOCH=$epoch" >> "$GITHUB_ENV"
+          echo "BUILD_SOURCE_LABEL=$branch_name" >> "$GITHUB_ENV"
+          bin/get_version.sh "$branch_name" "$commit" clique "${timestamp:0:8}"
       - name: Cache west modules
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         env:
           cache-name: cache-zephyr-modules
         with:
@@ -31,31 +60,42 @@ jobs:
             zephyr/
             bootloader/
             zmk/
-          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('manifest-dir/west.yml') }}
-          restore-keys: |
-            ${{ runner.os }}-build-${{ env.cache-name }}-
-            ${{ runner.os }}-build-
-            ${{ runner.os }}-
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('config/west.yml', 'Dockerfile') }}
       - name: West Init
         run: west init -l config
       - name: West Update
-        run: west update
+        run: python3 scripts/update_west.py --update-workspace .
       - name: West Zephyr export
-        run: west zephyr-export
+        run: |
+          west zephyr-export
+          echo "ZEPHYR_BUILD_VERSION=$(git -C zephyr rev-parse HEAD | cut -c1-12)" >> "$GITHUB_ENV"
       - name: West Build (left)
-        run: west build -s zmk/app -d build/left -b adv360_left -S studio-rpc-usb-uart -- -DZMK_CONFIG="${GITHUB_WORKSPACE}/config" -DCONFIG_ZMK_STUDIO=y
+        run: west build -s zmk/app -d build/left -b adv360_left -S studio-rpc-usb-uart -- -DZMK_CONFIG="${GITHUB_WORKSPACE}/config" -DCONFIG_ZMK_STUDIO=y -DBUILD_VERSION="$ZEPHYR_BUILD_VERSION"
       - name: Adv360 Left Kconfig file
         run: grep -vE '(^#|^$)' build/left/zephyr/.config
       - name: West Build (right)
-        run: west build -s zmk/app -d build/right -b adv360_right -- -DZMK_CONFIG="${GITHUB_WORKSPACE}/config"
+        run: west build -s zmk/app -d build/right -b adv360_right -- -DZMK_CONFIG="${GITHUB_WORKSPACE}/config" -DBUILD_VERSION="$ZEPHYR_BUILD_VERSION"
       - name: Adv360 Right Kconfig file
         run: grep -vE '(^#|^$)' build/right/zephyr/.config
       - name: Rename zmk.uf2
         run: cp build/left/zephyr/zmk.uf2 ${{ steps.get_info.outputs.file_prefix }}-left.uf2 && cp build/right/zephyr/zmk.uf2 ${{ steps.get_info.outputs.file_prefix }}-right.uf2
+      - name: Record build inputs and checksums
+        run: |
+          cp config/west.yml west-manifest.yml
+          west manifest --freeze --active-only > west-active-manifest.yml
+          printf 'source_revision=%s\nsource_dirty=false\nsource_label=%s\nsource_date_epoch=%s\nimage=%s\nzephyr_build_version=%s\n' \
+            "$GITHUB_SHA" "$BUILD_SOURCE_LABEL" "$SOURCE_DATE_EPOCH" "$(sed -n 's/^FROM //p' Dockerfile)" "$ZEPHYR_BUILD_VERSION" > build-info.txt
+          find config -type f -print0 | sort -z | xargs -0 sha256sum > config-SHA256SUMS
+          sha256sum -- *-left.uf2 *-right.uf2 > SHA256SUMS
       - name: Archive (Adv360)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: firmware-clique
           path: |
             ${{ steps.get_info.outputs.file_prefix }}-left.uf2
             ${{ steps.get_info.outputs.file_prefix }}-right.uf2
+            build-info.txt
+            west-manifest.yml
+            west-active-manifest.yml
+            SHA256SUMS
+            config-SHA256SUMS

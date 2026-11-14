@@ -1,1 +1,7 @@
 /firmware/*.uf2
+/firmware/build-info.txt
+/firmware/west-manifest.yml
+/firmware/west-active-manifest.yml
+/firmware/SHA256SUMS
+/firmware/config-SHA256SUMS
+__pycache__/
